@@ -8,13 +8,13 @@ from exceptions.WalkForwardError import *
 @dataclass
 class WalkForwardSplitter:
 
-    train_ratio: float
-    validation_ratio: float
-    test_ratio: float
+    nb_train_buckets: int
+    nb_validation_buckets: int
+    nb_test_buckets: int
     num_buckets: int
 
-    if (train_ratio + validation_ratio + test_ratio != 1):
-        raise WalkForwardError("Ratios dont add up to 1.")
+    if (nb_train_buckets + nb_validation_buckets + nb_test_buckets > num_buckets):
+        raise WalkForwardError("Impossible split. Train/Validate/Test buckets exceed num_buckets")
     
     def bucketize(self,data_array: np.ndarray) -> list[np.ndarray]:
         bucket_list = list()
@@ -38,49 +38,5 @@ class WalkForwardSplitter:
 
         return bucket_list
 
-            
-
-            
-
-            
-
-
-
-
-
     def train_validation_test(self,data_array: np.array) -> list[list]:
-        final_array = list()
-
-        initial_bucket_size = data_array.size // self.buckets
-        bucket_remainder = data_array.size % self.buckets
-
-        if (bucket_remainder > self.buckets):
-            bucket_size = initial_bucket_size + (bucket_remainder // self.buckets)
-            bucket_remainder = bucket_remainder % self.buckets
-        else:
-            bucket_size = initial_bucket_size
-
-        train_bucket_size = round(bucket_size * self.train_ratio)
-        validation_bucket_size = round((bucket_size - train_bucket_size) * self.validation_ratio)
-
-        for bucket_idx in range(self.buckets + 1):
-
-            train_start = bucket_idx * bucket_size
-            train_validation_test = list()
-
-            if bucket_remainder > 0:
-                train_end = train_start + train_bucket_size + 1
-                bucket_remainder -= 1
-            else:
-                train_end = train_start + train_bucket_size
-            
-            np.append(train_validation_test,data_array[train_start : train_end])
-
-            validation_end = train_end + validation_bucket_size
-
-            train_validation_test.append(data_array[train_end : validation_end])
-            train_validation_test.append(data_array[validation_end : -1])
-
-            final_array.append(train_validation_test)
-
-        return final_array
+        return
