@@ -47,11 +47,11 @@ class WalkForwardSplitter:
         buckets: list[np.ndarray] = self.bucketize(data_array)
         splits: list = list()
         max_displacement: int = (self.num_buckets - self.moving_buckets) // self.bucket_step
-        
-        for displasement in range(max_displacement):
-            split: dict = dict
 
-            start_train = displasement * self.bucket_step + self.nb_train_buckets
+        for displacement in range(max_displacement + 1):
+            split: dict = {}
+
+            start_train = displacement * self.bucket_step
             end_train = start_train + self.nb_train_buckets
             end_validation = end_train + self.nb_validation_buckets
             end_test = end_validation + self.nb_test_buckets
