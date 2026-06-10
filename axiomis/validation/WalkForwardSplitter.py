@@ -12,22 +12,23 @@ class WalkForwardSplitter:
     nb_validation_buckets: int
     nb_test_buckets: int
     num_buckets: int
+    bucket_step: int
 
     if (nb_train_buckets + nb_validation_buckets + nb_test_buckets > num_buckets):
         raise WalkForwardError("Impossible split. Train/Validate/Test buckets exceed num_buckets")
     
     def bucketize(self,data_array: np.ndarray) -> list[np.ndarray]:
-        bucket_list = list()
+        bucket_list: list = list()
 
-        data_size = data_array.shape[0]
+        data_size: int = data_array.shape[0]
 
-        bucket_size = data_size // self.num_buckets
-        remainder = data_size % self.num_buckets
+        bucket_size: int = data_size // self.num_buckets
+        remainder: int = data_size % self.num_buckets
         
-        bucket_start = 0
+        bucket_start: int = 0
 
         for bucket_idx in range(self.num_buckets):
-            bucket_end = bucket_start + bucket_size
+            bucket_end: int = bucket_start + bucket_size
 
             if remainder > 0:
                 bucket_end += 1
@@ -37,6 +38,27 @@ class WalkForwardSplitter:
             bucket_start = bucket_end
 
         return bucket_list
+    
+    def moving_buckets(self):
+        return self.nb_train_buckets + self.nb_validation_buckets + self.nb_test_buckets
 
-    def train_validation_test(self,data_array: np.array) -> list[list]:
-        return
+    def train_validation_test(self,data_array: np.ndarray) -> list[dict]:
+
+        buckets: list[np.ndarray] = self.bucketize(data_array)
+        splits: list = list()
+        max_displacement: int = (self.num_buckets - self.moving_buckets) // self.bucket_step
+        
+        for displasement in range(max_displacement):
+            split: dict = dict
+
+            start_train = displasement * self.bucket_step + self.nb_train_buckets
+            end_train = start_train + self.nb_train_buckets
+            end_validation = end_train + self.nb_validation_buckets
+            end_test = end_validation + self.nb_test_buckets
+
+            split["train"] = buckets[start_train:end_train]
+            split["validation"] = buckets[end_train:end_validation]
+            split["test"] = buckets[end_validation:end_test]
+
+            splits.append(split)
+        return splits
