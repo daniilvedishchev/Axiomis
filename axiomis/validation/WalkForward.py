@@ -6,6 +6,13 @@ import numpy as np
 from exceptions.WalkForwardError import *
 
 @dataclass
+class WalkForwardSplit:
+    train: np.ndarray
+    validation: np.ndarray
+    test: np.ndarray
+    split_id: int
+
+@dataclass
 class WalkForwardSplitter:
 
     nb_train_buckets: int
@@ -42,23 +49,25 @@ class WalkForwardSplitter:
     def moving_buckets(self):
         return self.nb_train_buckets + self.nb_validation_buckets + self.nb_test_buckets
 
-    def train_validation_test(self,data_array: np.ndarray) -> list[dict]:
+    def train_validation_test(self,data_array: np.ndarray) -> list[WalkForwardSplit]:
 
         buckets: list[np.ndarray] = self.bucketize(data_array)
-        splits: list = list()
+        splits: list[WalkForwardSplit] = list()
         max_displacement: int = (self.num_buckets - self.moving_buckets) // self.bucket_step
 
         for displacement in range(max_displacement + 1):
-            split: dict = {}
+            split: WalkForwardSplit
 
             start_train = displacement * self.bucket_step
             end_train = start_train + self.nb_train_buckets
             end_validation = end_train + self.nb_validation_buckets
             end_test = end_validation + self.nb_test_buckets
 
-            split["train"] = buckets[start_train:end_train]
-            split["validation"] = buckets[end_train:end_validation]
-            split["test"] = buckets[end_validation:end_test]
-
+            split = WalkForwardSplit(
+                train=buckets[start_train:end_train],
+                validation=buckets[end_train:end_validation],
+                test=buckets[end_validation:end_test],
+                split_id=displacement
+            )
             splits.append(split)
         return splits
