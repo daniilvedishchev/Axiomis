@@ -7,9 +7,9 @@ from exceptions.WalkForwardError import *
 
 @dataclass
 class WalkForwardSplit:
-    train: np.ndarray
-    validation: np.ndarray
-    test: np.ndarray
+    train: list[np.ndarray]
+    validation: list[np.ndarray]
+    test: list[np.ndarray]
     split_id: int
 
 @dataclass
@@ -21,8 +21,9 @@ class WalkForwardSplitter:
     num_buckets: int
     bucket_step: int
 
-    if (nb_train_buckets + nb_validation_buckets + nb_test_buckets > num_buckets):
-        raise WalkForwardError("Impossible split. Train/Validate/Test buckets exceed num_buckets")
+    def __post_init__(self) -> None:
+        if self.moving_buckets() > self.num_buckets:
+            raise WalkForwardError("Impossible split. Train/Validate/Test buckets exceed num_buckets")
     
     def bucketize(self,data_array: np.ndarray) -> list[np.ndarray]:
         bucket_list: list = list()
@@ -53,7 +54,7 @@ class WalkForwardSplitter:
 
         buckets: list[np.ndarray] = self.bucketize(data_array)
         splits: list[WalkForwardSplit] = list()
-        max_displacement: int = (self.num_buckets - self.moving_buckets) // self.bucket_step
+        max_displacement: int = (self.num_buckets - self.moving_buckets()) // self.bucket_step
 
         for displacement in range(max_displacement + 1):
             split: WalkForwardSplit
