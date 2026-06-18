@@ -49,7 +49,7 @@ class TargetBuilder:
                 if lag >= len(dataframe) or lag <= 0:
                     raise InvalidLagError("Lag couldn't be bigger than dataset size or a negative value.")
                 for mode in self.modes:
-                    colname:str = f"{column}_lag_{lag}_mode{mode.value}"
+                    colname:str = f"{column}_lag_{lag}_mode_{mode.value}"
                     if (mode == TargetMode.MULTICLASS):
                         for spread in self.spread_bps:
                             colname_with_spread = colname + f"_spread_bps_{spread}"
