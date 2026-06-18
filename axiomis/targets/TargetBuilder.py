@@ -13,11 +13,9 @@ class TargetMode(Enum):
     DELTA = "delta"
 
 class TargetBuilder:
-    def __init__(self, columns:list[str], lags:list[int], fee_bps:int, spread_bps:list[int]):
+    def __init__(self, columns:list[str], lags:list[int]):
        self.columns = columns
        self.lags = lags
-       self.fee_bps = fee_bps
-       self.spread_bps = spread_bps
 
        self.COLUMN_TARGET_CONFIG = {
            "mid": {
@@ -59,17 +57,12 @@ class TargetBuilder:
                 if lag >= len(dataframe) or lag <= 0:
                     raise InvalidLagError("Lag couldn't be bigger than dataset size or a negative value.")
                 
-                for spread_bps in self.spread_bps:
 
-                    config = self.COLUMN_TARGET_CONFIG[column]
-                    target_values = self.TARGET_FUNCTIONS[config["mode"]](dataframe,column,lag)
+                config = self.COLUMN_TARGET_CONFIG[column]
+                target_values = self.TARGET_FUNCTIONS[config["mode"]](dataframe,column,lag)
 
-                    if (config["threshold"] == "fraction"):
-                        target_values = target_values-bps_to_fraction(self.fee_bps+spread_bps)
-                    if (config["threshold"] == "bps"):
-                        target_values = target_values-(self.fee_bps+spread_bps)
 
-                    targets[f"{column}_lag_{lag}_mode_{config['mode'].value}_bps_{spread_bps}"] = target_values
+                targets[f"{column}_lag_{lag}_mode_{config['mode'].value}"] = target_values
         return targets
     
     
