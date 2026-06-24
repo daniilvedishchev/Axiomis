@@ -1,212 +1,186 @@
 import pandas as pd
 import numpy as np
 
-from axiomis.targets.helpers.Helper import *
+from axiomis.targets.helpers.Helper import to_ms
 
-class TradeFlowTargetBuilder:
-    def __init__(self,horizons_s:list[int]):
-        self.horizons_sec:list[int] = horizons_s
-        self.features:list[str] = ["buy_vol","sell_vol","buy_count","sell_count","total_vol","vwap_buy","vwap_sell"]
 
-    def calculate_forward_trade_flow_derived_features_by_horizon(
-        self,
-        base_feature_df: pd.DataFrame) -> pd.DataFrame:
-        
-        df = base_feature_df.copy()
+class TradeFlowBaseBuilder:
+    def __init__(self, horizons_s: list[int]):
+        self.horizons_sec = sorted(horizons_s)
 
-        for horizon in self.horizons_sec:
-            buy_vol = df[f"buy_vol_{horizon}s"]
-            sell_vol = df[f"sell_vol_{horizon}s"]
+    def _add_derived(self, df: pd.DataFrame, prefix: str) -> pd.DataFrame:
+        df = df.copy()
 
-            buy_count = df[f"buy_count_{horizon}s"]
-            sell_count = df[f"sell_count_{horizon}s"]
-
-            vwap_buy = df[f"vwap_buy_{horizon}s"]
-            vwap_sell = df[f"vwap_sell_{horizon}s"]
+        for h in self.horizons_sec:
+            buy_vol = df[f"{prefix}_buy_vol_{h}s"]
+            sell_vol = df[f"{prefix}_sell_vol_{h}s"]
+            buy_count = df[f"{prefix}_buy_count_{h}s"]
+            sell_count = df[f"{prefix}_sell_count_{h}s"]
+            vwap_buy = df[f"{prefix}_vwap_buy_{h}s"]
+            vwap_sell = df[f"{prefix}_vwap_sell_{h}s"]
 
             total_vol = buy_vol + sell_vol
             total_count = buy_count + sell_count
 
-            df[f"trade_imbalance_{horizon}s"] = np.where(
+            df[f"{prefix}_trade_imbalance_{h}s"] = np.where(
                 total_vol > 0,
                 (buy_vol - sell_vol) / total_vol,
                 0.0,
             )
 
-            df[f"cvd_{horizon}s"] = buy_vol - sell_vol
+            df[f"{prefix}_cvd_{h}s"] = buy_vol - sell_vol
 
-            df[f"trade_count_imbalance_{horizon}s"] = np.where(
+            df[f"{prefix}_trade_count_imbalance_{h}s"] = np.where(
                 total_count > 0,
                 (buy_count - sell_count) / total_count,
                 0.0,
             )
 
-            df[f"avg_buy_size_{horizon}s"] = np.where(
+            df[f"{prefix}_avg_buy_size_{h}s"] = np.where(
                 buy_count > 0,
                 buy_vol / buy_count,
                 0.0,
             )
 
-            df[f"avg_sell_size_{horizon}s"] = np.where(
+            df[f"{prefix}_avg_sell_size_{h}s"] = np.where(
                 sell_count > 0,
                 sell_vol / sell_count,
                 0.0,
             )
 
-            df[f"vwap_spread_{horizon}s"] = vwap_buy - vwap_sell
-
-            df[f"buy_ratio_{horizon}s"] = np.where(
-                total_vol > 0,
-                buy_vol / total_vol,
-                0.0,
-            )
-
-            df[f"sell_ratio_{horizon}s"] = np.where(
-                total_vol > 0,
-                sell_vol / total_vol,
-                0.0,
-            )
+            df[f"{prefix}_vwap_spread_{h}s"] = vwap_buy - vwap_sell
 
         return df
 
-    def calculate_forward_trade_flow_base_features_by_horizon(self,
+    def _build_window_flow(
+        self,
         trades_dataframe: pd.DataFrame,
-        reference_timestamps_ms: np.array,
-        time_col: str = "trade_time_ms"
-    ) -> np.ndarray:
+        reference_timestamps_ms: np.ndarray,
+        direction: str,
+        prefix: str,
+        time_col: str = "trade_time_ms",
+    ) -> pd.DataFrame:
+        trades = trades_dataframe.copy().sort_values(time_col)
 
-        is_first_window: bool = True
+        trade_ts = trades[time_col].to_numpy(dtype=np.int64)
+        qty = trades["quantity"].to_numpy(dtype=float)
+        side = trades["is_buyer_maker"].to_numpy(dtype=int)
+        price = trades["price"].to_numpy(dtype=float)
 
-        trade_timestamps = trades_dataframe[time_col].to_numpy(dtype=int)
-        trade_quantities = trades_dataframe["quantity"].to_numpy(dtype=float)
-        trade_side = trades_dataframe["is_buyer_maker"].to_numpy(dtype=int)
-        trade_prices = trades_dataframe["price"].to_numpy(dtype=int)
+        n_trades = len(trade_ts)
+        n_refs = len(reference_timestamps_ms)
+        n_h = len(self.horizons_sec)
 
-        n_trades = len(trade_timestamps)
-        n_orderbook = len(reference_timestamps_ms)
+        left_ptr = np.zeros(n_h, dtype=int)
+        right_ptr = np.zeros(n_h, dtype=int)
 
-        horizon_size = len(self.horizons_sec)
+        buy_qty = np.zeros(n_h)
+        sell_qty = np.zeros(n_h)
+        buy_count = np.zeros(n_h)
+        sell_count = np.zeros(n_h)
+        buy_pq = np.zeros(n_h)
+        sell_pq = np.zeros(n_h)
 
-        right_ptr_by_horizon = np.zeros(horizon_size, dtype=int)
+        results = {
+            f"{prefix}_buy_vol_{h}s": np.zeros(n_refs) for h in self.horizons_sec
+        }
 
-        buy_volume_result      = np.zeros((horizon_size, n_orderbook))
-        sell_volume_result     = np.zeros((horizon_size, n_orderbook))
-        buy_count_result       = np.zeros((horizon_size, n_orderbook))
-        sell_count_result      = np.zeros((horizon_size, n_orderbook))
-        total_volume_result    = np.zeros((horizon_size, n_orderbook))
-        vwap_buy_result        = np.zeros((horizon_size, n_orderbook))
-        vwap_sell_result       = np.zeros((horizon_size, n_orderbook))
+        for h in self.horizons_sec:
+            results[f"{prefix}_sell_vol_{h}s"] = np.zeros(n_refs)
+            results[f"{prefix}_buy_count_{h}s"] = np.zeros(n_refs)
+            results[f"{prefix}_sell_count_{h}s"] = np.zeros(n_refs)
+            results[f"{prefix}_total_vol_{h}s"] = np.zeros(n_refs)
+            results[f"{prefix}_vwap_buy_{h}s"] = np.zeros(n_refs)
+            results[f"{prefix}_vwap_sell_{h}s"] = np.zeros(n_refs)
 
-        buy_qty_by_horizon     = np.zeros(horizon_size)
-        sell_qty_by_horizon    = np.zeros(horizon_size)
-        buy_count_by_horizon   = np.zeros(horizon_size)
-        sell_count_by_horizon  = np.zeros(horizon_size)
-        vwap_num_by_horizon    = np.zeros(horizon_size)
-        vwap_buy_by_horizon     = np.zeros(horizon_size)
-        vwap_sell_by_horizon     = np.zeros(horizon_size)
+        for ref_idx, anchor_ms in enumerate(reference_timestamps_ms):
+            for h_idx, h in enumerate(self.horizons_sec):
+                h_ms = to_ms(h)
 
-        left_ptr = 0
-        right_ptr = 0
-        previous_left_pointer = 0
-
-        buy_qty = 0.0
-        buy_count = 0
-        sell_qty = 0.0
-        sell_count = 0
-        vwap_num = 0
-        vwap_buy = 0
-        vwap_sell = 0
-
-        for anchor_idx in range(n_orderbook):
-
-            while (
-                left_ptr < n_trades
-                and reference_timestamps_ms[anchor_idx] > trade_timestamps[left_ptr]
-            ):
-                left_ptr += 1
-
-            if is_first_window:
-                right_ptr = left_ptr
-
-            for horizon_idx, horizon_s in enumerate(self.horizons_sec):
-
-                if not is_first_window:
-                    buy_qty = buy_qty_by_horizon[horizon_idx]
-                    sell_qty = sell_qty_by_horizon[horizon_idx]
-                    buy_count = buy_count_by_horizon[horizon_idx]
-                    sell_count = sell_count_by_horizon[horizon_idx]
-                    vwap_num = vwap_num_by_horizon[horizon_idx]
-                    vwap_buy = vwap_buy_by_horizon[horizon_idx]
-                    vwap_sell = vwap_sell_by_horizon[horizon_idx]
-
-                    if left_ptr - previous_left_pointer > 0:
-                        for i in range(previous_left_pointer, left_ptr):
-                            if trade_side[i] == 0:
-                                buy_qty -= trade_quantities[i]
-                                buy_count -= 1
-                                vwap_buy -= trade_quantities[i] * trade_prices[i]
-                            else:
-                                sell_qty -= trade_quantities[i]
-                                sell_count -= 1
-                                vwap_sell -= trade_quantities[i] * trade_prices[i]
-
-                    right_ptr = right_ptr_by_horizon[horizon_idx]
-
-                while (
-                    right_ptr < n_trades
-                    and trade_timestamps[right_ptr]
-                    < reference_timestamps_ms[anchor_idx] + to_ms(horizon_s)
-                ):
-                    if trade_side[right_ptr] == 0:
-                        buy_qty += trade_quantities[right_ptr]
-                        buy_count += 1
-                        vwap_buy += trade_quantities[right_ptr] * trade_prices[right_ptr]
-                    else:
-                        sell_qty += trade_quantities[right_ptr]
-                        sell_count += 1
-                        vwap_sell += trade_quantities[right_ptr] * trade_prices[right_ptr]
-
-                    right_ptr += 1
-
-                right_ptr_by_horizon[horizon_idx] = right_ptr
-
-                total_qty = buy_qty + sell_qty
-
-                buy_volume_result[horizon_idx][anchor_idx] = buy_qty
-                sell_volume_result[horizon_idx][anchor_idx] = sell_qty
-                buy_count_result[horizon_idx][anchor_idx] = buy_count
-                sell_count_result[horizon_idx][anchor_idx] = sell_count
-                total_volume_result[horizon_idx][anchor_idx] = total_qty
-                vwap_buy_result[horizon_idx][anchor_idx] = vwap_buy/buy_qty if buy_qty>0 else 0
-                vwap_sell_result[horizon_idx][anchor_idx] = vwap_sell/sell_qty if sell_qty>0 else 0
-
-                if is_first_window:
-                    for j in range(len(self.horizons_sec)):
-                        right_ptr_by_horizon[j] = right_ptr
-                        buy_qty_by_horizon[j]     = buy_qty
-                        sell_qty_by_horizon[j]    = sell_qty
-                        buy_count_by_horizon[j]   = buy_count
-                        sell_count_by_horizon[j]  = sell_count
-                        vwap_num_by_horizon[j]    = vwap_num
-                        vwap_buy_by_horizon[j]     = vwap_buy
-                        vwap_sell_by_horizon[j]     = vwap_sell
-
-                    is_first_window = False
+                if direction == "forward":
+                    window_start = anchor_ms
+                    window_end = anchor_ms + h_ms
+                elif direction == "past":
+                    window_start = anchor_ms - h_ms
+                    window_end = anchor_ms
                 else:
-                    buy_qty_by_horizon[horizon_idx]     = buy_qty
-                    sell_qty_by_horizon[horizon_idx]    = sell_qty
-                    buy_count_by_horizon[horizon_idx]   = buy_count
-                    sell_count_by_horizon[horizon_idx]  = sell_count
-                    vwap_num_by_horizon[horizon_idx]    = vwap_num
-                    vwap_buy_by_horizon[horizon_idx]     = vwap_buy
-                    vwap_sell_by_horizon[horizon_idx]     = vwap_sell
+                    raise ValueError("direction must be 'forward' or 'past'")
 
-            previous_left_pointer = left_ptr
-        
-        result_vec = np.array([buy_volume_result,sell_volume_result,buy_count_result,sell_count_result,total_volume_result,vwap_buy_result,vwap_sell_result])
+                while left_ptr[h_idx] < n_trades and trade_ts[left_ptr[h_idx]] < window_start:
+                    i = left_ptr[h_idx]
 
-        
-        feature_dataframe = {f"{feature}_{horizon}s": result_vec[i][idx] for i,feature in enumerate(self.features) for idx,horizon in enumerate(self.horizons_sec)}
-        feature_dataframe["ts_provider_ms"] = reference_timestamps_ms
+                    if side[i] == 0:
+                        buy_qty[h_idx] -= qty[i]
+                        buy_count[h_idx] -= 1
+                        buy_pq[h_idx] -= qty[i] * price[i]
+                    else:
+                        sell_qty[h_idx] -= qty[i]
+                        sell_count[h_idx] -= 1
+                        sell_pq[h_idx] -= qty[i] * price[i]
 
-        return pd.DataFrame(feature_dataframe)
+                    left_ptr[h_idx] += 1
+
+                while right_ptr[h_idx] < n_trades and trade_ts[right_ptr[h_idx]] < window_end:
+                    i = right_ptr[h_idx]
+
+                    if side[i] == 0:
+                        buy_qty[h_idx] += qty[i]
+                        buy_count[h_idx] += 1
+                        buy_pq[h_idx] += qty[i] * price[i]
+                    else:
+                        sell_qty[h_idx] += qty[i]
+                        sell_count[h_idx] += 1
+                        sell_pq[h_idx] += qty[i] * price[i]
+
+                    right_ptr[h_idx] += 1
+
+                total = buy_qty[h_idx] + sell_qty[h_idx]
+
+                results[f"{prefix}_buy_vol_{h}s"][ref_idx] = buy_qty[h_idx]
+                results[f"{prefix}_sell_vol_{h}s"][ref_idx] = sell_qty[h_idx]
+                results[f"{prefix}_buy_count_{h}s"][ref_idx] = buy_count[h_idx]
+                results[f"{prefix}_sell_count_{h}s"][ref_idx] = sell_count[h_idx]
+                results[f"{prefix}_total_vol_{h}s"][ref_idx] = total
+
+                results[f"{prefix}_vwap_buy_{h}s"][ref_idx] = (
+                    buy_pq[h_idx] / buy_qty[h_idx] if buy_qty[h_idx] > 0 else 0.0
+                )
+
+                results[f"{prefix}_vwap_sell_{h}s"][ref_idx] = (
+                    sell_pq[h_idx] / sell_qty[h_idx] if sell_qty[h_idx] > 0 else 0.0
+                )
+        results["ts_provider_ms"] = reference_timestamps_ms
+        base_df = pd.DataFrame(results)
+        return self._add_derived(base_df, prefix)
+
+
+class TradeFlowTargetBuilder(TradeFlowBaseBuilder):
+    def build_forward_targets(
+        self,
+        trades_dataframe: pd.DataFrame,
+        reference_timestamps_ms: np.ndarray,
+        time_col: str = "trade_time_ms",
+    ) -> pd.DataFrame:
+        return self._build_window_flow(
+            trades_dataframe=trades_dataframe,
+            reference_timestamps_ms=reference_timestamps_ms,
+            direction="forward",
+            prefix="forward",
+            time_col=time_col,
+        )
+
+
+class TradeFlowFeatureBuilder(TradeFlowBaseBuilder):
+    def build_past_features(
+        self,
+        trades_dataframe: pd.DataFrame,
+        reference_timestamps_ms: np.ndarray,
+        time_col: str = "trade_time_ms",
+    ) -> pd.DataFrame:
+        return self._build_window_flow(
+            trades_dataframe=trades_dataframe,
+            reference_timestamps_ms=reference_timestamps_ms,
+            direction="past",
+            prefix="past",
+            time_col=time_col,
+        )

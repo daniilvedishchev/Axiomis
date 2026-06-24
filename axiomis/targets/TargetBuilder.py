@@ -56,13 +56,12 @@ class TargetBuilder:
             for lag in self.lags:
                 if lag >= len(dataframe) or lag <= 0:
                     raise InvalidLagError("Lag couldn't be bigger than dataset size or a negative value.")
-                
 
                 config = self.COLUMN_TARGET_CONFIG[column]
                 target_values = self.TARGET_FUNCTIONS[config["mode"]](dataframe,column,lag)
 
-
-                targets[f"{column}_lag_{lag}_mode_{config['mode'].value}"] = target_values
+                targets[f"{column}_forward_{lag}_mode_{config['mode'].value}"] = target_values
+        targets["ts_provider_ms"] = dataframe["ts_provider_ms"]
         return targets
     
     
